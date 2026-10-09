@@ -279,3 +279,96 @@ fn vault_on_disk() {
     vault.delete(ObjectKind::Media, &id).unwrap();
     assert!(vault.get(ObjectKind::Media, &id, Vec::new()).is_err());
 }
+
+#[test]
+fn header_from_elsewhere_is_only_adopted_if_authentic() {
+    let (ours, theirs) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (vault, _) = Vault::create(ours.path(), "uno", FAST_KDF).unwrap();
+    let original = vault.header_bytes().unwrap();
+
+    // Another vault's header is refused, however valid it is on its own.
+    let (other, _) = Vault::create(theirs.path(), "uno", FAST_KDF).unwrap();
+    assert!(vault.adopt_header(&other.header_bytes().unwrap()).is_err());
+
+    // So is our own header with a field edited by the storage backend.
+    let edited = String::from_utf8(original.clone())
+        .unwrap()
+        .replace("\"iterations\": 1", "\"iterations\": 2");
+    assert!(matches!(
+        vault.adopt_header(edited.as_bytes()),
+        Err(Error::Corrupted)
+    ));
+    assert_eq!(vault.header_bytes().unwrap(), original);
+
+    // A password change made on a second device is picked up.
+    let second = tempfile::tempdir().unwrap();
+    Vault::install_header(second.path(), &original).unwrap();
+    let on_second = Vault::open(second.path(), "uno").unwrap();
+    on_second.change_password("dos", FAST_KDF).unwrap();
+    vault
+        .adopt_header(&on_second.header_bytes().unwrap())
+        .unwrap();
+    assert!(Vault::open(ours.path(), "dos").is_ok());
+    assert!(Vault::open(ours.path(), "uno").is_err());
+}
+
+#[test]
+fn imported_ciphertext_must_decrypt() {
+    let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (source, _) = Vault::create(a.path(), "pw", FAST_KDF).unwrap();
+    Vault::install_header(b.path(), &source.header_bytes().unwrap()).unwrap();
+    let target = Vault::open(b.path(), "pw").unwrap();
+
+    let (id, _) = source
+        .put(ObjectKind::Media, &pattern(100_000)[..])
+        .unwrap();
+    let (mut raw, len) = source.open_raw(ObjectKind::Media, &id).unwrap();
+    let mut ciphertext = Vec::new();
+    std::io::Read::read_to_end(&mut raw, &mut ciphertext).unwrap();
+    assert_eq!(len, ciphertext.len() as u64);
+
+    let mut damaged = ciphertext.clone();
+    damaged[5000] ^= 1;
+    assert!(
+        target
+            .import_raw(ObjectKind::Media, &id, &damaged[..])
+            .is_err()
+    );
+    assert!(
+        target
+            .import_raw(ObjectKind::Entry, &id, &ciphertext[..])
+            .is_err()
+    );
+    assert!(target.list(ObjectKind::Media).unwrap().is_empty());
+    assert_eq!(
+        files_under(b.path()),
+        1,
+        "only vault.json; no temp files left"
+    );
+
+    target
+        .import_raw(ObjectKind::Media, &id, &ciphertext[..])
+        .unwrap();
+    let mut out = Vec::new();
+    target.get(ObjectKind::Media, &id, &mut out).unwrap();
+    assert_eq!(out, pattern(100_000));
+}
+
+#[test]
+fn local_secrets_round_trip_and_need_the_key() {
+    let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (vault, _) = Vault::create(a.path(), "pw", FAST_KDF).unwrap();
+    let (other, _) = Vault::create(b.path(), "pw", FAST_KDF).unwrap();
+    let sealed = vault.seal_local(b"webdav password").unwrap();
+    assert!(!sealed.windows(6).any(|w| w == b"webdav"));
+    assert_eq!(&**vault.open_local(&sealed).unwrap(), b"webdav password");
+    assert!(other.open_local(&sealed).is_err());
+}
+
+fn files_under(dir: &std::path::Path) -> usize {
+    fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .map(|p| if p.is_dir() { files_under(&p) } else { 1 })
+        .sum()
+}

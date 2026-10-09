@@ -1,0 +1,19 @@
+[package]
+name = "sealed-diary-sync"
+description = "Sync of a Sealed Diary vault with storage the user runs: WebDAV or a folder"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+base64 = "0.22"
+hex = "0.4"
+sealed-diary-core = { path = "../sealed-diary-core" }
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+thiserror = "2"
+ureq = "3"
+
+[dev-dependencies]
+base64 = "0.22"
+tempfile = "3"

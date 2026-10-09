@@ -12,15 +12,22 @@
 use std::fmt;
 use std::fs::{self, File};
 use std::io::{self, BufReader, BufWriter, Read, Write};
+
 use std::path::{Path, PathBuf};
+use zeroize::Zeroizing;
 
 use crate::error::{Error, Result};
 use crate::keys::{KdfParams, MasterKey, RecoveryKey, VaultHeader, random_bytes};
 use crate::object::{
-    DEFAULT_CHUNK_LOG2, ObjectId, ObjectKind, ObjectReader, decrypt_object, encrypt_object,
+    DEFAULT_CHUNK_LOG2, ObjectId, ObjectKind, ObjectReader, decrypt_bytes, decrypt_object,
+    encrypt_bytes, encrypt_object,
 };
 
 const HEADER_FILE: &str = "vault.json";
+
+// Local secrets are not addressed by id; a fresh nonce per sealing keeps
+// reusing one id safe.
+const LOCAL_ID: ObjectId = ObjectId::ZERO;
 
 pub struct Vault {
     root: PathBuf,
@@ -65,6 +72,92 @@ impl Vault {
         let mut header = read_header(&self.root)?;
         header.change_password(&self.key, new_password, kdf)?;
         write_atomic(&self.root.join(HEADER_FILE), &header.to_json()?)
+    }
+
+    /// The header file exactly as stored, for copying to a sync remote.
+    pub fn header_bytes(&self) -> Result<Vec<u8>> {
+        Ok(fs::read(self.root.join(HEADER_FILE))?)
+    }
+
+    /// Whether `header` is a genuine header of this same vault, written by
+    /// someone who holds its master key.
+    pub fn check_header(&self, header: &[u8]) -> Result<()> {
+        let theirs = VaultHeader::from_json(header)?;
+        if theirs.vault_id() != read_header(&self.root)?.vault_id() {
+            return Err(Error::InvalidParameter(
+                "header belongs to a different vault",
+            ));
+        }
+        theirs.verify(&self.key)
+    }
+
+    /// Replaces the local header with one from another device, picking up a
+    /// password change made there. Refuses anything [`Vault::check_header`]
+    /// would.
+    pub fn adopt_header(&self, header: &[u8]) -> Result<()> {
+        self.check_header(header)?;
+        write_atomic(&self.root.join(HEADER_FILE), header)
+    }
+
+    /// Puts a header fetched from a sync remote into an empty `root`, so this
+    /// device can join an existing vault. It is only trusted once
+    /// [`Vault::open`] succeeds with the user's password.
+    pub fn install_header(root: impl AsRef<Path>, header: &[u8]) -> Result<()> {
+        let root = root.as_ref();
+        if Self::exists(root) {
+            return Err(Error::InvalidParameter("a vault already exists here"));
+        }
+        VaultHeader::from_json(header)?;
+        fs::create_dir_all(root)?;
+        write_atomic(&root.join(HEADER_FILE), header)
+    }
+
+    /// Opens an object's ciphertext, with its length, for copying to a remote.
+    pub fn open_raw(&self, kind: ObjectKind, id: &ObjectId) -> Result<(File, u64)> {
+        let file = File::open(self.object_path(kind, id))?;
+        let len = file.metadata()?.len();
+        Ok((file, len))
+    }
+
+    /// Stores ciphertext fetched from a remote under `id`, but only after it
+    /// decrypts in full: nothing unauthenticated ever enters the vault.
+    pub fn import_raw<R: Read>(
+        &self,
+        kind: ObjectKind,
+        id: &ObjectId,
+        mut reader: R,
+    ) -> Result<()> {
+        let path = self.object_path(kind, id);
+        fs::create_dir_all(path.parent().expect("object path has a parent"))?;
+        let tmp = tmp_path(&path)?;
+        let imported = (|| {
+            let mut file = File::create(&tmp)?;
+            io::copy(&mut reader, &mut file)?;
+            file.sync_all()?;
+            decrypt_object(
+                &self.key,
+                kind,
+                id,
+                BufReader::new(File::open(&tmp)?),
+                io::sink(),
+            )?;
+            fs::rename(&tmp, &path)?;
+            Ok(())
+        })();
+        if imported.is_err() {
+            let _ = fs::remove_file(&tmp);
+        }
+        imported
+    }
+
+    /// Encrypts a small secret that stays on this device, such as the sync
+    /// server's credentials, so it is unreadable while the diary is locked.
+    pub fn seal_local(&self, plaintext: &[u8]) -> Result<Vec<u8>> {
+        encrypt_bytes(&self.key, ObjectKind::Local, &LOCAL_ID, plaintext)
+    }
+
+    pub fn open_local(&self, sealed: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
+        decrypt_bytes(&self.key, ObjectKind::Local, &LOCAL_ID, sealed)
     }
 
     /// Encrypts `reader` into a new object. Returns its id and plaintext size.

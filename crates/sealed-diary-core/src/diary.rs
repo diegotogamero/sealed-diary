@@ -123,6 +123,21 @@ pub struct Listing {
     pub unreadable: usize,
 }
 
+/// What a sync needs to know about the revisions on this device.
+#[derive(Debug, Default)]
+pub struct Audit {
+    /// Revisions that decrypt and parse.
+    pub readable: HashSet<ObjectId>,
+    /// Revisions named as replaced by some readable revision. Safe to delete
+    /// everywhere: whatever replaced them already exists.
+    pub replaced: HashSet<ObjectId>,
+    /// Media some readable revision still points to.
+    pub referenced_media: HashSet<ObjectId>,
+    /// When non-zero, `referenced_media` may be incomplete and must not be
+    /// used to justify deleting anything.
+    pub unreadable: usize,
+}
+
 #[derive(Serialize, Deserialize)]
 struct Revision {
     v: u32,
@@ -190,6 +205,21 @@ impl Diary {
             entries,
             unreadable,
         })
+    }
+
+    pub fn audit(&self) -> Result<Audit> {
+        let (revisions, unreadable) = self.load_all()?;
+        let mut audit = Audit {
+            unreadable,
+            ..Audit::default()
+        };
+        for (id, revision) in revisions {
+            audit.readable.insert(id);
+            audit.replaced.extend(revision.parents);
+            let attachments = revision.content.into_iter().flat_map(|c| c.attachments);
+            audit.referenced_media.extend(attachments.map(|a| a.object));
+        }
+        Ok(audit)
     }
 
     pub fn get(&self, id: &EntryId) -> Result<Option<EntryState>> {

@@ -3,8 +3,8 @@
 Diario personal cifrado de extremo a extremo, multiplataforma y sin servidor central.
 Texto, fotos, canciones y vídeos. Tus datos viven en infraestructura que montas tú.
 
-> **Estado: en desarrollo.** Hay núcleo criptográfico con tests y una primera aplicación de escritorio.
-> Todavía no hay aplicación móvil ni sincronización integrada. No lo uses aún para datos reales:
+> **Estado: en desarrollo.** Hay aplicación de escritorio con sincronización contra tu propio servidor.
+> Todavía no hay aplicación móvil. No lo uses aún para datos reales:
 > el código no ha pasado ninguna auditoría externa.
 
 ## Principios
@@ -13,6 +13,10 @@ Texto, fotos, canciones y vídeos. Tus datos viven en infraestructura que montas
 - **Sin cuentas.** No hay registro, email ni teléfono. No existe servidor del proyecto.
 - **Sin telemetría.** La aplicación no contacta con nadie salvo con el almacenamiento que tú configures.
 - **Contraseña siempre.** Cada apertura de la aplicación exige tu contraseña. Sin ella (o sin la clave de recuperación) los datos son irrecuperables, también para ti.
+
+## Sincronización
+
+No hay servidor del proyecto: lo montas tú. Guía paso a paso en [docs/servidor.md](docs/servidor.md).
 
 ## Modelo de amenaza
 
@@ -44,6 +48,7 @@ clave de recuperación ─HKDF──▶ ┘
 - **Clave maestra:** aleatoria, de 256 bits, envuelta por la contraseña y por la clave de recuperación. Cambiar la contraseña no obliga a recifrar nada.
 - **Objetos:** cada entrada o fichero multimedia se cifra con XChaCha20-Poly1305 en trozos de 64 KiB autenticados uno a uno. Esto permite reproducir un vídeo saltando a cualquier punto sin descifrarlo entero y con memoria constante.
 - **Entradas:** nunca se editan en sitio. Cada guardado escribe una revisión nueva que nombra a las que sustituye. Si dos dispositivos editan la misma entrada sin conexión, al sincronizar aparecen ambas versiones como conflicto; ninguna pisa a la otra. Una revisión antigua restaurada por el servidor no vuelve a ser la actual.
+- **Cabecera autenticada:** `vault.json` lleva un código calculado con la clave maestra. Un servidor no puede sustituirlo por uno propio, y un cambio de contraseña hecho en un dispositivo se acepta en los demás solo si es genuino.
 - **Bóveda:** una carpeta con `vault.json` (sin secretos), `entries/` y `media/` (blobs cifrados con nombre aleatorio). Esa carpeta es lo único que se sincroniza.
 
 Solo se usan primitivas estándar de las bibliotecas [RustCrypto](https://github.com/RustCrypto). El formato exacto está documentado en `crates/sealed-diary-core/src/object.rs` y `keys.rs`.
@@ -53,13 +58,15 @@ Solo se usan primitivas estándar de las bibliotecas [RustCrypto](https://github
 1. [x] Núcleo: jerarquía de claves, formato de objetos, bóveda en disco.
 2. [x] Modelo de entradas (texto, fecha, etiquetas, adjuntos) con historial de revisiones y detección de conflictos.
 3. [x] Aplicación de escritorio (Tauri 2): bloqueo, editor, adjuntos con reproducción cifrada.
-4. [ ] Sincronización: carpeta local (Syncthing) y WebDAV, con resolución de conflictos.
+4. [x] Sincronización con WebDAV o con una carpeta, con resolución de conflictos.
 5. [ ] Aplicación móvil (Android, después iOS).
-6. [ ] Tutorial de infraestructura propia: servidor WebDAV con Docker, accesible solo por VPN.
+6. [x] [Tutorial de infraestructura propia](docs/servidor.md): servidor WebDAV con Docker, accesible por VPN.
 
 ## Estructura
 
 - `crates/sealed-diary-core`: formato de la bóveda y criptografía. Sin interfaz, sin red.
+- `crates/sealed-diary-sync`: sincronización con WebDAV o una carpeta. Decide en el dispositivo, con la clave, qué se copia y qué se borra; el servidor no decide nada.
+- `server/`: servidor WebDAV mínimo para alojar tú mismo.
 - `app/src-tauri`: aplicación Tauri. Expone órdenes a la interfaz y sirve los adjuntos descifrando al vuelo solo el tramo pedido.
 - `app/ui`: interfaz en HTML, CSS y JavaScript sin dependencias ni empaquetador.
 

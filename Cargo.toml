@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/sealed-diary-core", "app/src-tauri"]
+members = ["crates/sealed-diary-core", "crates/sealed-diary-sync", "app/src-tauri"]
 
 [workspace.package]
 edition = "2024"

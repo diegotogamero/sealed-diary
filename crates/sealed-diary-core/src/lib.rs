@@ -11,7 +11,7 @@ mod keys;
 mod object;
 mod vault;
 
-pub use diary::{Attachment, Diary, Entry, EntryContent, EntryId, EntryState, Listing};
+pub use diary::{Attachment, Audit, Diary, Entry, EntryContent, EntryId, EntryState, Listing};
 pub use error::{Error, Result};
 pub use keys::{KdfParams, MasterKey, RecoveryKey, VaultHeader};
 pub use object::{

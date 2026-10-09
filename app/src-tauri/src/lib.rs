@@ -6,14 +6,15 @@
 //! plaintext copy ever touching disk.
 
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, Read};
 use std::path::PathBuf;
-use std::sync::{RwLock, RwLockReadGuard};
+use std::sync::{Mutex, RwLock, RwLockReadGuard};
 
 use sealed_diary_core::{
     Attachment, Diary, Entry, EntryContent, EntryId, Error, KdfParams, Listing, ObjectId,
-    ObjectKind, RecoveryKey, Vault,
+    ObjectKind, RecoveryKey, Vault, VaultHeader,
 };
+use sealed_diary_sync::{Remote, RemotePath, Report, SyncError, SyncState, WebDav, sync};
 use serde::{Deserialize, Serialize};
 use tauri::http::{Request, Response, StatusCode, header};
 use tauri::{AppHandle, Manager, State};
@@ -29,6 +30,11 @@ const MAX_RANGE_LEN: u64 = 1 << 20;
 
 struct AppState {
     root: PathBuf,
+    /// Sync settings, sealed with the vault key so the server password is
+    /// unreadable while the diary is locked.
+    sync_file: PathBuf,
+    /// Held for the length of a sync so two never run at once.
+    syncing: Mutex<()>,
     /// `None` while locked. Dropping the diary wipes the master key.
     diary: RwLock<Option<Diary>>,
 }
@@ -56,6 +62,18 @@ fn code(error: Error) -> String {
         Error::InvalidParameter(what) => format!("invalid: {what}"),
         Error::Rng => "rng".into(),
         Error::Io(e) => format!("io: {e}"),
+    }
+}
+
+fn sync_code(error: SyncError) -> String {
+    match error {
+        SyncError::Network(_) => "sync-network".into(),
+        SyncError::Unauthorized => "sync-unauthorized".into(),
+        SyncError::Status(status) => format!("sync-status: {status}"),
+        SyncError::InvalidUrl(_) => "sync-url".into(),
+        SyncError::DifferentVault => "different-vault".into(),
+        SyncError::Vault(e) => code(e),
+        SyncError::Io(e) => format!("io: {e}"),
     }
 }
 
@@ -200,6 +218,147 @@ fn mime_for(name: &str) -> &'static str {
     }
 }
 
+#[derive(Default, Serialize, Deserialize)]
+struct SyncSettings {
+    url: String,
+    username: String,
+    password: String,
+    state: SyncState,
+}
+
+impl SyncSettings {
+    fn remote(&self) -> Result<WebDav, String> {
+        WebDav::new(&self.url, &self.username, &self.password).map_err(sync_code)
+    }
+
+    fn load(state: &AppState, diary: &Diary) -> Result<Option<Self>, String> {
+        let sealed = match std::fs::read(&state.sync_file) {
+            Ok(sealed) => sealed,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(format!("io: {e}")),
+        };
+        let json = diary.vault().open_local(&sealed).map_err(code)?;
+        serde_json::from_slice(&json)
+            .map(Some)
+            .map_err(|_| "corrupted".to_owned())
+    }
+
+    fn store(&self, state: &AppState, diary: &Diary) -> Result<(), String> {
+        let json = Zeroizing::new(serde_json::to_vec(self).map_err(|e| format!("io: {e}"))?);
+        let sealed = diary.vault().seal_local(&json).map_err(code)?;
+        if let Some(dir) = state.sync_file.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("io: {e}"))?;
+        }
+        std::fs::write(&state.sync_file, sealed).map_err(|e| format!("io: {e}"))
+    }
+
+    /// Syncs and remembers the outcome, so the next run knows what changed.
+    fn run(&mut self, state: &AppState, diary: &Diary) -> Result<Report, String> {
+        let remote = self.remote()?;
+        let _one_at_a_time = state.syncing.lock().unwrap_or_else(|e| e.into_inner());
+        let report = sync(diary, &remote, &mut self.state).map_err(sync_code)?;
+        self.store(state, diary)?;
+        Ok(report)
+    }
+}
+
+#[derive(Serialize)]
+struct SyncInfo {
+    url: String,
+    username: String,
+}
+
+/// Where this diary syncs to, if anywhere. Never returns the password.
+#[tauri::command(async)]
+fn sync_info(state: State<'_, AppState>) -> Result<Option<SyncInfo>, String> {
+    let guard = state.read();
+    let diary = guard.as_ref().ok_or("locked")?;
+    Ok(SyncSettings::load(&state, diary)?.map(|s| SyncInfo {
+        url: s.url,
+        username: s.username,
+    }))
+}
+
+/// Sets the server up and runs a first sync; nothing is saved unless it works.
+#[tauri::command(async)]
+fn configure_sync(
+    state: State<'_, AppState>,
+    url: String,
+    username: String,
+    password: String,
+) -> Result<Report, String> {
+    let guard = state.read();
+    let diary = guard.as_ref().ok_or("locked")?;
+    let mut settings = SyncSettings {
+        url: url.trim().to_owned(),
+        username,
+        password,
+        state: SyncState::default(),
+    };
+    settings.remote()?.prepare().map_err(sync_code)?;
+    settings.run(&state, diary)
+}
+
+#[tauri::command(async)]
+fn disable_sync(state: State<'_, AppState>) -> Result<(), String> {
+    match std::fs::remove_file(&state.sync_file) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(format!("io: {e}")),
+        _ => Ok(()),
+    }
+}
+
+/// `None` when sync is not set up.
+#[tauri::command(async)]
+fn sync_now(state: State<'_, AppState>) -> Result<Option<Report>, String> {
+    let guard = state.read();
+    let diary = guard.as_ref().ok_or("locked")?;
+    match SyncSettings::load(&state, diary)? {
+        Some(mut settings) => settings.run(&state, diary).map(Some),
+        None => Ok(None),
+    }
+}
+
+/// Sets this device up from a diary that already lives on the user's server.
+#[tauri::command(async)]
+fn join_vault(
+    state: State<'_, AppState>,
+    url: String,
+    username: String,
+    password: String,
+    diary_password: String,
+) -> Result<Report, String> {
+    let diary_password = Zeroizing::new(diary_password);
+    let mut settings = SyncSettings {
+        url: url.trim().to_owned(),
+        username,
+        password,
+        state: SyncState::default(),
+    };
+    let remote = settings.remote()?;
+    let mut header = Vec::new();
+    remote
+        .download(&RemotePath::Header)
+        .map_err(sync_code)?
+        .ok_or("no-remote-vault")?
+        .take(1 << 20)
+        .read_to_end(&mut header)
+        .map_err(|e| format!("io: {e}"))?;
+    // Checked against the password before anything is written, so a wrong
+    // password or a forged header leaves this device untouched.
+    VaultHeader::from_json(&header)
+        .and_then(|h| h.unlock(&diary_password))
+        .map_err(code)?;
+    Vault::install_header(&state.root, &header).map_err(code)?;
+    let diary = Diary::new(Vault::open(&state.root, &diary_password).map_err(code)?);
+    // Settings are kept even if this first sync is cut short: the diary is
+    // set up, and the next sync carries on from wherever this one stopped.
+    let report = settings
+        .store(&state, &diary)
+        .and_then(|()| settings.run(&state, &diary));
+    state.set(Some(diary));
+    report
+}
+
 /// `bytes=a-b`, `bytes=a-` or `bytes=-n` as an inclusive range within `len`.
 fn parse_range(value: &str, len: u64) -> Option<(u64, u64)> {
     let (start, end) = value.strip_prefix("bytes=")?.split_once('-')?;
@@ -299,12 +458,15 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // Point this at a Syncthing or WebDAV-mounted folder to sync.
+            let data_dir = app.path().app_data_dir()?;
             let root = match std::env::var_os(VAULT_DIR_ENV) {
                 Some(dir) => PathBuf::from(dir),
-                None => app.path().app_data_dir()?.join("vault"),
+                None => data_dir.join("vault"),
             };
             app.manage(AppState {
                 root,
+                sync_file: data_dir.join("sync.bin"),
+                syncing: Mutex::new(()),
                 diary: RwLock::new(None),
             });
             Ok(())
@@ -327,6 +489,11 @@ pub fn run() {
             save_entry,
             delete_entry,
             attach_files,
+            sync_info,
+            configure_sync,
+            disable_sync,
+            sync_now,
+            join_vault,
         ])
         .run(tauri::generate_context!())
         .expect("failed to start Sealed Diary");
@@ -387,6 +554,8 @@ mod tests {
         let id = attachment.object.to_hex();
         let state = AppState {
             root: dir.clone(),
+            sync_file: dir.join("sync.bin"),
+            syncing: Mutex::new(()),
             diary: RwLock::new(Some(diary)),
         };
 
@@ -440,6 +609,47 @@ mod tests {
 
         state.set(None);
         assert_eq!(get(&state, &id, None).unwrap_err(), StatusCode::FORBIDDEN);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Run with the same variables as the sync crate's `real_webdav_server`.
+    #[test]
+    #[ignore = "needs a running WebDAV server"]
+    fn sync_settings_survive_sealed_on_disk() {
+        let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("set {name}"));
+        let dir = std::env::temp_dir().join(format!("sealed-diary-sync-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (vault, _) = Vault::create(dir.join("vault"), "una contraseña", FAST_KDF).unwrap();
+        let diary = Diary::new(vault);
+        let state = AppState {
+            root: dir.join("vault"),
+            sync_file: dir.join("sync.bin"),
+            syncing: Mutex::new(()),
+            diary: RwLock::new(None),
+        };
+        assert!(SyncSettings::load(&state, &diary).unwrap().is_none());
+
+        let content = EntryContent {
+            date: "2026-10-09".into(),
+            body: "hola".into(),
+            ..Default::default()
+        };
+        diary.create(content).unwrap();
+        let mut settings = SyncSettings {
+            url: var("SEALED_DIARY_TEST_WEBDAV"),
+            username: var("SEALED_DIARY_TEST_USER"),
+            password: var("SEALED_DIARY_TEST_PASSWORD"),
+            state: SyncState::default(),
+        };
+        settings.remote().unwrap().prepare().unwrap();
+        assert_eq!(settings.run(&state, &diary).unwrap().uploaded, 1);
+
+        let on_disk = std::fs::read(&state.sync_file).unwrap();
+        let secret = settings.password.as_bytes();
+        assert!(!on_disk.windows(secret.len()).any(|w| w == secret));
+        let mut reloaded = SyncSettings::load(&state, &diary).unwrap().unwrap();
+        assert_eq!(reloaded.password, settings.password);
+        assert_eq!(reloaded.run(&state, &diary).unwrap(), Report::default());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

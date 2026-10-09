@@ -19,6 +19,21 @@
         <label for="create-repeat">Repite la contraseña</label>
         <input id="create-repeat" type="password" autocomplete="new-password" minlength="10" required />
         <button class="primary">Crear diario</button>
+        <button type="button" class="link" id="show-join">Ya tengo un diario en mi servidor</button>
+      </form>
+
+      <form id="join-form" hidden>
+        <p>Conecta este dispositivo con el diario que ya guardas en tu servidor.</p>
+        <label for="join-url">Dirección WebDAV</label>
+        <input id="join-url" type="url" placeholder="https://…" autocapitalize="off" spellcheck="false" required />
+        <label for="join-user">Usuario del servidor</label>
+        <input id="join-user" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" required />
+        <label for="join-server-password">Contraseña del servidor</label>
+        <input id="join-server-password" type="password" autocomplete="off" required />
+        <label for="join-password">Contraseña del diario</label>
+        <input id="join-password" type="password" autocomplete="current-password" required />
+        <button class="primary">Conectar</button>
+        <button type="button" class="link" id="show-create">Volver</button>
       </form>
 
       <form id="unlock-form" hidden>
@@ -64,6 +79,10 @@
         <p id="unreadable" class="notice" role="status" hidden></p>
         <ul id="entries"></ul>
         <p id="empty" class="hint" hidden>Todavía no hay entradas.</p>
+        <footer>
+          <button id="open-sync">Sincronización</button>
+          <p id="sync-status" class="hint" role="status"></p>
+        </footer>
       </aside>
 
       <form id="editor" class="editor-pane">
@@ -95,6 +114,29 @@
         <p id="editor-error" class="error" role="alert" hidden></p>
       </form>
     </div>
+
+    <dialog id="sync-dialog">
+      <form id="sync-form">
+        <h2>Sincronización</h2>
+        <p class="hint">
+          Tu servidor solo recibe ficheros cifrados. La contraseña del servidor se guarda cifrada en este
+          dispositivo.
+        </p>
+        <label for="sync-url">Dirección WebDAV</label>
+        <input id="sync-url" type="url" placeholder="https://…" autocapitalize="off" spellcheck="false" required />
+        <label for="sync-user">Usuario del servidor</label>
+        <input id="sync-user" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" required />
+        <label for="sync-password">Contraseña del servidor</label>
+        <input id="sync-password" type="password" autocomplete="off" required />
+        <p id="sync-error" class="error" role="alert" hidden></p>
+        <menu>
+          <button type="button" id="sync-disable" class="danger" hidden>Desactivar</button>
+          <span class="spacer"></span>
+          <button type="button" id="sync-close">Cerrar</button>
+          <button class="primary" id="sync-save">Guardar y sincronizar</button>
+        </menu>
+      </form>
+    </dialog>
 
     <dialog id="confirm">
       <form method="dialog">

@@ -11,6 +11,11 @@ const MESSAGES = {
   corrupted: "Los datos están dañados o han sido manipulados.",
   "unsupported-version": "Este diario se creó con una versión más reciente de la aplicación.",
   locked: "El diario está bloqueado.",
+  "sync-network": "No se pudo conectar con el servidor.",
+  "sync-unauthorized": "El servidor rechazó el usuario o la contraseña.",
+  "sync-url": "Dirección no válida. Usa https://, o http:// solo con una IP de red privada o VPN.",
+  "different-vault": "Ese servidor contiene un diario distinto. No se ha modificado nada.",
+  "no-remote-vault": "No hay ningún diario en esa dirección.",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -23,7 +28,7 @@ let lockTimer;
 
 // ---------------------------------------------------------------- lock screen
 
-const gateForms = ["create-form", "unlock-form", "recover-form", "recovery-shown"];
+const gateForms = ["create-form", "unlock-form", "recover-form", "recovery-shown", "join-form"];
 
 function showGate(form) {
   $("diary").hidden = true;
@@ -97,6 +102,28 @@ $("recover-form").addEventListener("submit", (event) => {
   });
 });
 
+$("join-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const args = {
+    url: $("join-url").value,
+    username: $("join-user").value,
+    password: $("join-server-password").value,
+    diaryPassword: $("join-password").value,
+  };
+  submitGate(event.target, async () => {
+    const { exists } = await invoke("status");
+    try {
+      await invoke("join_vault", args);
+    } catch (error) {
+      // The diary itself was set up; only the first download was cut short.
+      if (exists || !(await invoke("status")).unlocked) throw error;
+    }
+    await enterDiary();
+  });
+});
+
+$("show-join").addEventListener("click", () => showGate("join-form"));
+$("show-create").addEventListener("click", () => showGate("create-form"));
 $("show-recover").addEventListener("click", () => showGate("recover-form"));
 $("show-unlock").addEventListener("click", () => showGate("unlock-form"));
 
@@ -108,10 +135,113 @@ async function enterDiary() {
   newEntry();
   await refresh();
   armAutoLock();
+  syncTimer = setInterval(syncNow, SYNC_EVERY_MS);
+  syncNow();
 }
+
+// ----------------------------------------------------------------------- sync
+
+const SYNC_EVERY_MS = 5 * 60 * 1000;
+let syncTimer;
+let syncing = false;
+let syncAgain = false;
+
+function syncStatus(text) {
+  $("sync-status").textContent = text;
+}
+
+function reportSync(report) {
+  const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const notes = [];
+  if (report.rejected) notes.push(`${report.rejected} fichero(s) del servidor no superaron la verificación`);
+  if (report.password_changed) notes.push("la contraseña se cambió en otro dispositivo");
+  syncStatus(`Sincronizado a las ${time}${notes.length ? ` · ${notes.join(" · ")}` : ""}`);
+}
+
+/** Syncs if a server is set up. A request made while one runs is not lost: it runs right after. */
+async function syncNow() {
+  if ($("diary").hidden) return;
+  if (syncing) {
+    syncAgain = true;
+    return;
+  }
+  syncing = true;
+  try {
+    syncStatus("Sincronizando…");
+    const report = await invoke("sync_now");
+    if (!report) {
+      syncStatus("Sin sincronización: el diario solo está en este dispositivo.");
+    } else {
+      reportSync(report);
+      if (report.downloaded || report.deleted) await refresh();
+    }
+  } catch (error) {
+    if (error !== "locked") syncStatus(`⚠ Sin sincronizar. ${describe(error)}`);
+  } finally {
+    syncing = false;
+    if (syncAgain) {
+      syncAgain = false;
+      syncNow();
+    }
+  }
+}
+
+function syncDialogError(error) {
+  $("sync-error").textContent = error ? describe(error) : "";
+  $("sync-error").hidden = !error;
+}
+
+$("open-sync").addEventListener("click", async () => {
+  syncDialogError(null);
+  $("sync-password").value = "";
+  try {
+    const info = await invoke("sync_info");
+    $("sync-url").value = info?.url ?? "";
+    $("sync-user").value = info?.username ?? "";
+    $("sync-disable").hidden = !info;
+  } catch (error) {
+    syncDialogError(error);
+  }
+  $("sync-dialog").showModal();
+});
+
+$("sync-close").addEventListener("click", () => $("sync-dialog").close());
+
+$("sync-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  $("sync-save").disabled = true;
+  syncDialogError(null);
+  try {
+    const report = await invoke("configure_sync", {
+      url: $("sync-url").value,
+      username: $("sync-user").value,
+      password: $("sync-password").value,
+    });
+    $("sync-password").value = "";
+    $("sync-dialog").close();
+    reportSync(report);
+    await refresh();
+  } catch (error) {
+    syncDialogError(error);
+  } finally {
+    $("sync-save").disabled = false;
+  }
+});
+
+$("sync-disable").addEventListener("click", async () => {
+  try {
+    await invoke("disable_sync");
+    $("sync-dialog").close();
+    syncNow();
+  } catch (error) {
+    syncDialogError(error);
+  }
+});
 
 async function lockDiary() {
   clearTimeout(lockTimer);
+  clearInterval(syncTimer);
+  syncStatus("");
   await invoke("lock");
   // Leave nothing readable in the page once the key is gone.
   $("entries").replaceChildren();
@@ -308,6 +438,7 @@ async function save() {
   const state = listing.entries.find((entry) => entry.current.id === saved.id);
   if (state) openEntry(state);
   setStatus("Guardado.");
+  syncNow();
 }
 
 $("editor").addEventListener("input", () => {
@@ -355,6 +486,7 @@ $("delete-entry").addEventListener("click", async () => {
     newEntry();
     await refresh();
     $("diary").dataset.pane = "list";
+    syncNow();
   } catch (error) {
     editorError(error);
   }

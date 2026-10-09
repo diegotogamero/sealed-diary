@@ -1,0 +1,16 @@
+# Servidor WebDAV mínimo para Sealed Diary.
+# Solo almacena ficheros cifrados: no puede leer el diario.
+services:
+  webdav:
+    image: rclone/rclone:latest
+    command: serve webdav /data --addr :8080
+    environment:
+      RCLONE_USER: ${DIARY_USER:?define DIARY_USER en .env}
+      RCLONE_PASS: ${DIARY_PASSWORD:?define DIARY_PASSWORD en .env}
+    volumes:
+      - ./data:/data
+    ports:
+      # Solo esta máquina. Cambia 127.0.0.1 por la IP de tu VPN para acceder
+      # desde otros dispositivos. No lo expongas a internet sin HTTPS.
+      - "${DIARY_BIND:-127.0.0.1}:8080:8080"
+    restart: unless-stopped

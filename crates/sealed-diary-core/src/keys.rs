@@ -15,6 +15,7 @@ use argon2::{Algorithm, Argon2, Params, Version};
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use hkdf::Hkdf;
+use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use unicode_normalization::UnicodeNormalization;
@@ -154,6 +155,11 @@ pub struct VaultHeader {
     salt: Vec<u8>,
     password_slot: KeySlot,
     recovery_slot: KeySlot,
+    /// Keyed by the master key over every field above. A header fetched from
+    /// a sync remote is only accepted if this checks out, so the backend
+    /// cannot swap in a header of its own making.
+    #[serde(with = "hex_serde")]
+    mac: Vec<u8>,
 }
 
 impl VaultHeader {
@@ -171,14 +177,16 @@ impl VaultHeader {
             &master,
         )?;
 
-        let header = Self {
+        let mut header = Self {
             version: HEADER_VERSION,
             vault_id,
             kdf,
             salt,
             password_slot,
             recovery_slot,
+            mac: Vec::new(),
         };
+        header.mac = header.mac_state(&master).finalize().into_bytes().to_vec();
         Ok((header, master, recovery))
     }
 
@@ -199,19 +207,55 @@ impl VaultHeader {
 
     pub fn unlock(&self, password: &str) -> Result<MasterKey> {
         let kek = password_kek(password, &self.salt, self.kdf)?;
-        unwrap(
+        let master = unwrap(
             &kek,
             &password_aad(&self.vault_id, &self.salt, self.kdf),
             &self.password_slot,
-        )
+        )?;
+        self.verify(&master)?;
+        Ok(master)
     }
 
     pub fn unlock_with_recovery(&self, recovery: &RecoveryKey) -> Result<MasterKey> {
-        unwrap(
+        let master = unwrap(
             &recovery_kek(recovery, &self.vault_id),
             &recovery_aad(&self.vault_id),
             &self.recovery_slot,
-        )
+        )?;
+        self.verify(&master)?;
+        Ok(master)
+    }
+
+    /// Checks that this header was written by someone holding `master`.
+    pub fn verify(&self, master: &MasterKey) -> Result<()> {
+        self.mac_state(master)
+            .verify_slice(&self.mac)
+            .map_err(|_| Error::Corrupted)
+    }
+
+    /// Identifies the vault; identical on every device that shares it.
+    pub fn vault_id(&self) -> &[u8] {
+        &self.vault_id
+    }
+
+    fn mac_state(&self, master: &MasterKey) -> Hmac<Sha256> {
+        let key = master.derive(&[b"sealed-diary/v1/header-mac"]);
+        let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(key.as_ref())
+            .expect("HMAC accepts keys of any length");
+        mac.update(&self.version.to_le_bytes());
+        mac.update(&self.kdf.memory_kib.to_le_bytes());
+        mac.update(&self.kdf.iterations.to_le_bytes());
+        mac.update(&self.kdf.parallelism.to_le_bytes());
+        let slots = [&self.password_slot, &self.recovery_slot];
+        let fields = [&self.vault_id, &self.salt]
+            .into_iter()
+            .chain(slots.into_iter().flat_map(|s| [&s.nonce, &s.ciphertext]));
+        for field in fields {
+            // Length-prefixed so no two headers serialize to the same bytes.
+            mac.update(&(field.len() as u64).to_le_bytes());
+            mac.update(field);
+        }
+        mac
     }
 
     /// Replaces the password slot. Requires an unlocked vault; the recovery
@@ -227,6 +271,7 @@ impl VaultHeader {
         self.password_slot = wrap(&kek, &password_aad(&self.vault_id, &salt, kdf), master)?;
         self.salt = salt;
         self.kdf = kdf;
+        self.mac = self.mac_state(master).finalize().into_bytes().to_vec();
         Ok(())
     }
 }

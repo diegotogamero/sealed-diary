@@ -41,6 +41,8 @@ const MAX_CHUNK_LOG2: u8 = 22;
 pub struct ObjectId([u8; ID_LEN]);
 
 impl ObjectId {
+    pub(crate) const ZERO: Self = Self([0; ID_LEN]);
+
     pub fn random() -> Result<Self> {
         Ok(Self(random_bytes()?))
     }
@@ -81,6 +83,8 @@ impl<'de> Deserialize<'de> for ObjectId {
 pub enum ObjectKind {
     Entry,
     Media,
+    /// Data that stays on this device, such as sync settings. Never synced.
+    Local,
 }
 
 impl ObjectKind {
@@ -88,13 +92,16 @@ impl ObjectKind {
         match self {
             Self::Entry => b"entry/",
             Self::Media => b"media/",
+            Self::Local => b"local/",
         }
     }
 
-    pub(crate) fn dir(self) -> &'static str {
+    /// Directory name for this kind, locally and on a sync remote.
+    pub fn dir(self) -> &'static str {
         match self {
             Self::Entry => "entries",
             Self::Media => "media",
+            Self::Local => "local",
         }
     }
 }

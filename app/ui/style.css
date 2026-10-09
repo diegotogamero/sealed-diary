@@ -213,6 +213,21 @@ button.link {
   flex: 1;
 }
 
+.list-pane footer {
+  display: grid;
+  gap: 0.4rem;
+}
+
+#sync-form {
+  display: grid;
+  gap: 0.6rem;
+}
+
+#sync-form label {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
 #entries {
   flex: 1;
   min-height: 0;
@@ -383,6 +398,7 @@ dialog::backdrop {
 
 dialog menu {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
   justify-content: flex-end;
   margin: 1.25rem 0 0;

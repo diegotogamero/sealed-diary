@@ -2,3 +2,5 @@
 node_modules
 *.tmp
 /app/src-tauri/gen/schemas
+/server/.env
+/server/data

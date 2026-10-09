@@ -5,7 +5,6 @@
 //! requested byte range on the fly so a video can play and seek without a
 //! plaintext copy ever touching disk.
 
-use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::PathBuf;
 use std::sync::{Mutex, RwLock, RwLockReadGuard};
@@ -18,7 +17,8 @@ use sealed_diary_sync::{Remote, RemotePath, Report, SyncError, SyncState, WebDav
 use serde::{Deserialize, Serialize};
 use tauri::http::{Request, Response, StatusCode, header};
 use tauri::{AppHandle, Manager, State};
-use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_dialog::{DialogExt, FilePath};
+use tauri_plugin_fs::{FsExt, OpenOptions};
 use zeroize::Zeroizing;
 
 const MIN_PASSWORD_CHARS: usize = 10;
@@ -183,39 +183,115 @@ fn attach_files(app: AppHandle, state: State<'_, AppState>) -> Result<Vec<Attach
         .file()
         .blocking_pick_files()
         .unwrap_or_default();
+    let io = |e: std::io::Error| format!("io: {e}");
     let mut attachments = Vec::new();
     for file in picked {
-        let path = file.into_path().map_err(|e| format!("io: {e}"))?;
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let source = BufReader::new(File::open(&path).map_err(|e| format!("io: {e}"))?);
-        attachments.push(state.with(|diary| diary.attach(source, &name, mime_for(&name)))?);
+        // On Android the picker hands back an opaque content URI, not a path,
+        // so the file is opened through the fs plugin, which understands both.
+        let picked_name = match &file {
+            FilePath::Path(path) => path.file_name().map(|n| n.to_string_lossy().into_owned()),
+            FilePath::Url(_) => None,
+        };
+        let mut options = OpenOptions::new();
+        options.read(true);
+        let mut source = app.fs().open(file, options).map_err(io)?;
+
+        let mut head = [0u8; 64];
+        let mut filled = 0;
+        while filled < head.len() {
+            match source.read(&mut head[filled..]).map_err(io)? {
+                0 => break,
+                n => filled += n,
+            }
+        }
+        let head = &head[..filled];
+        let mime = sniff_mime(head)
+            .or_else(|| picked_name.as_deref().map(mime_for_name))
+            .unwrap_or("application/octet-stream");
+        let name = picked_name.unwrap_or_else(|| format!("adjunto.{}", extension_for(mime)));
+
+        let whole = head.chain(BufReader::new(source));
+        attachments.push(state.with(|diary| diary.attach(whole, &name, mime))?);
     }
     Ok(attachments)
 }
 
-fn mime_for(name: &str) -> &'static str {
+/// Recognises a media file by its first bytes. A content URI carries no file
+/// name to go by, and an extension can be wrong anyway.
+fn sniff_mime(head: &[u8]) -> Option<&'static str> {
+    let at = |offset: usize, magic: &[u8]| head.get(offset..offset + magic.len()) == Some(magic);
+    let mime = if at(0, b"\xff\xd8\xff") {
+        "image/jpeg"
+    } else if at(0, b"\x89PNG\r\n\x1a\n") {
+        "image/png"
+    } else if at(0, b"GIF8") {
+        "image/gif"
+    } else if at(0, b"RIFF") && at(8, b"WEBP") {
+        "image/webp"
+    } else if at(0, b"RIFF") && at(8, b"WAVE") {
+        "audio/wav"
+    } else if at(0, b"OggS") {
+        "audio/ogg"
+    } else if at(0, b"fLaC") {
+        "audio/flac"
+    } else if at(0, b"ID3") || at(0, b"\xff\xfb") || at(0, b"\xff\xf3") {
+        "audio/mpeg"
+    } else if at(0, b"\x1a\x45\xdf\xa3") {
+        // Both are Matroska containers; the header names which.
+        if head.windows(4).any(|w| w == b"webm") {
+            "video/webm"
+        } else {
+            "video/x-matroska"
+        }
+    } else if at(4, b"ftyp") {
+        match head.get(8..12)? {
+            b"avif" | b"avis" => "image/avif",
+            b"heic" | b"heix" | b"mif1" => "image/heic",
+            b"M4A " | b"M4B " => "audio/mp4",
+            b"qt  " => "video/quicktime",
+            _ => "video/mp4",
+        }
+    } else {
+        return None;
+    };
+    Some(mime)
+}
+
+const MIME_BY_EXTENSION: &[(&str, &str)] = &[
+    ("jpg", "image/jpeg"),
+    ("jpeg", "image/jpeg"),
+    ("png", "image/png"),
+    ("gif", "image/gif"),
+    ("webp", "image/webp"),
+    ("avif", "image/avif"),
+    ("heic", "image/heic"),
+    ("mp3", "audio/mpeg"),
+    ("m4a", "audio/mp4"),
+    ("ogg", "audio/ogg"),
+    ("oga", "audio/ogg"),
+    ("opus", "audio/opus"),
+    ("flac", "audio/flac"),
+    ("wav", "audio/wav"),
+    ("mp4", "video/mp4"),
+    ("m4v", "video/mp4"),
+    ("webm", "video/webm"),
+    ("mov", "video/quicktime"),
+    ("mkv", "video/x-matroska"),
+];
+
+fn mime_for_name(name: &str) -> &'static str {
     let extension = name.rsplit_once('.').map_or("", |(_, e)| e);
-    match extension.to_ascii_lowercase().as_str() {
-        "jpg" | "jpeg" => "image/jpeg",
-        "png" => "image/png",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        "avif" => "image/avif",
-        "mp3" => "audio/mpeg",
-        "m4a" => "audio/mp4",
-        "ogg" | "oga" => "audio/ogg",
-        "opus" => "audio/opus",
-        "flac" => "audio/flac",
-        "wav" => "audio/wav",
-        "mp4" | "m4v" => "video/mp4",
-        "webm" => "video/webm",
-        "mov" => "video/quicktime",
-        "mkv" => "video/x-matroska",
-        _ => "application/octet-stream",
-    }
+    MIME_BY_EXTENSION
+        .iter()
+        .find(|(known, _)| extension.eq_ignore_ascii_case(known))
+        .map_or("application/octet-stream", |(_, mime)| mime)
+}
+
+fn extension_for(mime: &str) -> &'static str {
+    MIME_BY_EXTENSION
+        .iter()
+        .find(|(_, known)| *known == mime)
+        .map_or("bin", |(extension, _)| extension)
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -455,6 +531,7 @@ fn serve_media(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // Point this at a Syncthing or WebDAV-mounted folder to sync.
@@ -651,6 +728,40 @@ mod tests {
         assert_eq!(reloaded.password, settings.password);
         assert_eq!(reloaded.run(&state, &diary).unwrap(), Report::default());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn media_is_recognised_by_content_then_by_name() {
+        let ftyp = |brand: &[u8; 4]| [&[0, 0, 0, 24][..], b"ftyp", brand].concat();
+        let cases: &[(&[u8], &str)] = &[
+            (b"\xff\xd8\xff\xe0\x00\x10JFIF", "image/jpeg"),
+            (b"\x89PNG\r\n\x1a\n\x00", "image/png"),
+            (b"RIFF\x00\x00\x00\x00WEBPVP8 ", "image/webp"),
+            (b"RIFF\x00\x00\x00\x00WAVEfmt ", "audio/wav"),
+            (b"ID3\x04\x00", "audio/mpeg"),
+            (b"OggS\x00", "audio/ogg"),
+            (
+                b"\x1a\x45\xdf\xa3\x9f\x42\x86\x81\x01\x42\x82\x84webm",
+                "video/webm",
+            ),
+            (
+                b"\x1a\x45\xdf\xa3\x9f\x42\x82\x88matroska",
+                "video/x-matroska",
+            ),
+        ];
+        for (head, mime) in cases {
+            assert_eq!(sniff_mime(head), Some(*mime));
+        }
+        assert_eq!(sniff_mime(&ftyp(b"isom")), Some("video/mp4"));
+        assert_eq!(sniff_mime(&ftyp(b"M4A ")), Some("audio/mp4"));
+        assert_eq!(sniff_mime(&ftyp(b"avif")), Some("image/avif"));
+        assert_eq!(sniff_mime(b"just some text"), None);
+        assert_eq!(sniff_mime(b""), None);
+
+        assert_eq!(mime_for_name("Vacaciones.JPG"), "image/jpeg");
+        assert_eq!(mime_for_name("sin extension"), "application/octet-stream");
+        assert_eq!(extension_for("video/mp4"), "mp4");
+        assert_eq!(extension_for("application/octet-stream"), "bin");
     }
 
     #[test]

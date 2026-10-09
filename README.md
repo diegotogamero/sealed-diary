@@ -3,8 +3,8 @@
 Diario personal cifrado de extremo a extremo, multiplataforma y sin servidor central.
 Texto, fotos, canciones y vídeos. Tus datos viven en infraestructura que montas tú.
 
-> **Estado: en desarrollo.** Hay aplicación de escritorio con sincronización contra tu propio servidor.
-> Todavía no hay aplicación móvil. No lo uses aún para datos reales:
+> **Estado: en desarrollo.** Hay aplicación de escritorio con sincronización contra tu propio servidor,
+> y una versión Android que compila pero aún no se ha probado en un dispositivo. No lo uses aún para datos reales:
 > el código no ha pasado ninguna auditoría externa.
 
 ## Principios
@@ -59,7 +59,7 @@ Solo se usan primitivas estándar de las bibliotecas [RustCrypto](https://github
 2. [x] Modelo de entradas (texto, fecha, etiquetas, adjuntos) con historial de revisiones y detección de conflictos.
 3. [x] Aplicación de escritorio (Tauri 2): bloqueo, editor, adjuntos con reproducción cifrada.
 4. [x] Sincronización con WebDAV o con una carpeta, con resolución de conflictos.
-5. [ ] Aplicación móvil (Android, después iOS).
+5. [ ] Aplicación móvil: Android compila, falta probarla en dispositivo; iOS pendiente.
 6. [x] [Tutorial de infraestructura propia](docs/servidor.md): servidor WebDAV con Docker, accesible por VPN.
 
 ## Estructura
@@ -82,6 +82,23 @@ pnpm install
 pnpm tauri dev          # abre la aplicación
 pnpm tauri build        # genera instaladores
 ```
+
+### Android
+
+Además de lo anterior: JDK 17 o posterior, Android SDK con NDK, y Rust instalado con [rustup](https://rustup.rs) con los destinos de Android.
+
+```sh
+rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
+
+export JAVA_HOME=/ruta/al/jdk
+export ANDROID_HOME=/ruta/al/Android/Sdk
+export NDK_HOME=$ANDROID_HOME/ndk/<versión>
+
+cd app
+pnpm tauri android build --debug --apk --target aarch64
+```
+
+El APK queda en `app/src-tauri/gen/android/app/build/outputs/apk/universal/debug/`. La aplicación Android solo pide permiso de red, desactiva las copias de seguridad en la nube del sistema y bloquea las capturas de pantalla.
 
 La bóveda se guarda en la carpeta de datos de la aplicación. Para usar otra carpeta, por ejemplo una sincronizada con Syncthing, define `SEALED_DIARY_VAULT=/ruta/a/la/carpeta` al arrancar.
 

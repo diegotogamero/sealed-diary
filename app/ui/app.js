@@ -263,6 +263,26 @@ for (const activity of ["pointerdown", "keydown"]) {
   document.addEventListener(activity, armAutoLock, { passive: true });
 }
 
+// A phone suspends timers while the app is in the background, so the timer
+// above cannot be relied on there. Time away is measured on return instead.
+// Locking the moment the app is hidden would not do: the system file picker
+// hides it too, in the middle of attaching a photo.
+const AWAY_LOCK_MS = 2 * 60 * 1000;
+let hiddenAt = null;
+
+document.addEventListener("visibilitychange", async () => {
+  if (document.hidden) {
+    hiddenAt = Date.now();
+    return;
+  }
+  const away = hiddenAt === null ? 0 : Date.now() - hiddenAt;
+  hiddenAt = null;
+  if (away >= AWAY_LOCK_MS && !$("diary").hidden) {
+    if (dirty) await save().catch(() => {});
+    await lockDiary();
+  }
+});
+
 function today() {
   const now = new Date();
   const pad = (n) => String(n).padStart(2, "0");

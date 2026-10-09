@@ -82,4 +82,4 @@ La bóveda se guarda en la carpeta de datos de la aplicación. Para usar otra ca
 
 [MIT](LICENSE). Puedes usar, copiar, modificar y redistribuir el código sin más condición que conservar el aviso de copyright.
 
-Todas las dependencias tienen licencias permisivas (MIT, Apache-2.0, BSD o equivalentes). No se aceptan dependencias con licencias restrictivas o de código cerrado.
+Todas las dependencias son software libre. Casi todas tienen licencias permisivas (MIT, Apache-2.0, BSD o equivalentes). Las excepciones llegan a través de Tauri: cinco bibliotecas bajo MPL-2.0 (`cssparser`, `selectors` y auxiliares) y, en Linux, el motor web del sistema WebKitGTK bajo LGPL. Ninguna condiciona la licencia de este proyecto. No se aceptan dependencias de código cerrado.

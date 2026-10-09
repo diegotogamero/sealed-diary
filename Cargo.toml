@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/diario-core"]
+members = ["crates/lacre-core"]
 
 [workspace.package]
 edition = "2024"

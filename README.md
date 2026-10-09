@@ -3,8 +3,8 @@
 Diario personal cifrado de extremo a extremo, multiplataforma y sin servidor central.
 Texto, fotos, canciones y vídeos. Tus datos viven en infraestructura que montas tú.
 
-> **Estado: en desarrollo.** Hoy existe el núcleo criptográfico (`crates/sealed-diary-core`) con sus tests.
-> Todavía no hay aplicación ni sincronización. No lo uses aún para datos reales:
+> **Estado: en desarrollo.** Hay núcleo criptográfico con tests y una primera aplicación de escritorio.
+> Todavía no hay aplicación móvil ni sincronización integrada. No lo uses aún para datos reales:
 > el código no ha pasado ninguna auditoría externa.
 
 ## Principios
@@ -52,16 +52,31 @@ Solo se usan primitivas estándar de las bibliotecas [RustCrypto](https://github
 
 1. [x] Núcleo: jerarquía de claves, formato de objetos, bóveda en disco.
 2. [x] Modelo de entradas (texto, fecha, etiquetas, adjuntos) con historial de revisiones y detección de conflictos.
-3. [ ] Aplicación de escritorio (Tauri 2): bloqueo, editor, galería, reproductor.
+3. [x] Aplicación de escritorio (Tauri 2): bloqueo, editor, adjuntos con reproducción cifrada.
 4. [ ] Sincronización: carpeta local (Syncthing) y WebDAV, con resolución de conflictos.
 5. [ ] Aplicación móvil (Android, después iOS).
 6. [ ] Tutorial de infraestructura propia: servidor WebDAV con Docker, accesible solo por VPN.
 
+## Estructura
+
+- `crates/sealed-diary-core`: formato de la bóveda y criptografía. Sin interfaz, sin red.
+- `app/src-tauri`: aplicación Tauri. Expone órdenes a la interfaz y sirve los adjuntos descifrando al vuelo solo el tramo pedido.
+- `app/ui`: interfaz en HTML, CSS y JavaScript sin dependencias ni empaquetador.
+
 ## Desarrollo
 
+Requisitos: [Rust](https://rustup.rs), [pnpm](https://pnpm.io) y las [dependencias de sistema de Tauri](https://tauri.app/start/prerequisites/).
+
 ```sh
-cargo test
+cargo test              # tests del núcleo y de la aplicación
+
+cd app
+pnpm install
+pnpm tauri dev          # abre la aplicación
+pnpm tauri build        # genera instaladores
 ```
+
+La bóveda se guarda en la carpeta de datos de la aplicación. Para usar otra carpeta, por ejemplo una sincronizada con Syncthing, define `SEALED_DIARY_VAULT=/ruta/a/la/carpeta` al arrancar.
 
 ## Licencia
 

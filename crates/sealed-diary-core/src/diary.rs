@@ -86,7 +86,7 @@ impl EntryContent {
 }
 
 /// One revision of an entry, as stored.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Entry {
     pub id: EntryId,
     pub revision: ObjectId,
@@ -94,7 +94,7 @@ pub struct Entry {
     pub content: EntryContent,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct EntryState {
     pub current: Entry,
     /// Other heads of the same entry, newest first. Non-empty only after
@@ -113,7 +113,7 @@ impl EntryState {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize)]
 pub struct Listing {
     /// Newest diary date first.
     pub entries: Vec<EntryState>,

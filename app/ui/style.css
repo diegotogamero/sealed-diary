@@ -1,0 +1,416 @@
+:root {
+  color-scheme: light dark;
+  --paper: #f6f1e7;
+  --surface: #fffdf8;
+  --ink: #26221c;
+  --muted: #6b6253;
+  --line: #8c8271;
+  --soft-line: #ddd3c0;
+  --seal: #9c2428;
+  --on-seal: #fffdf8;
+  --notice: #fbeed0;
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+  --sans: system-ui, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #1b1915;
+    --surface: #24211c;
+    --ink: #ece5d6;
+    --muted: #a99f8c;
+    --line: #8a8171;
+    --soft-line: #3a352d;
+    --seal: #e0777a;
+    --on-seal: #1b1915;
+    --notice: #3a3020;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 1rem/1.5 var(--sans);
+}
+
+h1,
+h2 {
+  font-family: var(--serif);
+  font-weight: 600;
+  line-height: 1.2;
+  margin: 0;
+}
+
+p {
+  margin: 0;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+input,
+textarea {
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+button {
+  min-height: 2.75rem;
+  padding: 0.5rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button.primary {
+  background: var(--seal);
+  border-color: var(--seal);
+  color: var(--on-seal);
+  font-weight: 600;
+}
+
+button.danger {
+  border-color: var(--seal);
+  color: var(--seal);
+}
+
+button.link {
+  min-height: 0;
+  padding: 0.25rem 0;
+  background: none;
+  border: 0;
+  color: var(--muted);
+  text-decoration: underline;
+}
+
+:focus-visible {
+  outline: 3px solid var(--seal);
+  outline-offset: 2px;
+}
+
+.error {
+  color: var(--seal);
+  font-weight: 600;
+}
+
+.error::before {
+  content: "⚠ ";
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.notice {
+  padding: 0.75rem 1rem;
+  background: var(--notice);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+/* Lock screen */
+
+.gate {
+  display: grid;
+  gap: 1.5rem;
+  align-content: center;
+  width: min(100% - 2rem, 26rem);
+  min-height: 100dvh;
+  margin-inline: auto;
+  padding-block: 2rem;
+}
+
+.gate h1 {
+  font-size: 2.25rem;
+}
+
+.gate form,
+.gate section {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.gate label {
+  margin-top: 0.25rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.gate label.check {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  color: var(--ink);
+}
+
+.gate label.check input {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.key {
+  padding: 1rem;
+  background: var(--surface);
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  font: 1.05rem/1.8 ui-monospace, monospace;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+/* Diary */
+
+.diary {
+  display: grid;
+  grid-template-columns: minmax(15rem, 20rem) 1fr;
+  height: 100dvh;
+}
+
+.list-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-height: 0;
+  padding: 1rem;
+  border-right: 1px solid var(--soft-line);
+}
+
+.list-pane header {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.list-pane header .primary {
+  flex: 1;
+}
+
+#entries {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+#entries button {
+  display: grid;
+  gap: 0.1rem;
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  background: none;
+  border: 0;
+  border-left: 3px solid transparent;
+  border-radius: 0;
+  text-align: left;
+}
+
+#entries button[aria-current="true"] {
+  background: var(--surface);
+  border-left-color: var(--seal);
+}
+
+#entries time {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+#entries .name {
+  font-family: var(--serif);
+  font-size: 1.05rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+  min-height: 0;
+  padding: 1rem clamp(1rem, 4vw, 3rem);
+  overflow-y: auto;
+}
+
+.editor-pane header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.editor-pane header input[type="date"] {
+  width: auto;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.back {
+  display: none;
+}
+
+.title,
+.body {
+  background: none;
+  border-color: transparent;
+  font-family: var(--serif);
+}
+
+.title {
+  font-size: clamp(1.5rem, 1.2rem + 1.5vw, 2rem);
+  font-weight: 600;
+}
+
+.body {
+  flex: 1;
+  min-height: 14rem;
+  max-width: 44rem;
+  font-size: 1.125rem;
+  line-height: 1.7;
+  resize: none;
+}
+
+.title:hover,
+.body:hover,
+.title:focus,
+.body:focus {
+  border-color: var(--soft-line);
+}
+
+.editor-pane footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+#conflict-list {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.attachments {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr));
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.attachments li {
+  display: grid;
+  gap: 0.4rem;
+  align-content: start;
+  padding: 0.5rem;
+  background: var(--surface);
+  border: 1px solid var(--soft-line);
+  border-radius: 6px;
+}
+
+.attachments img,
+.attachments video {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: contain;
+  background: #000;
+  border-radius: 4px;
+}
+
+.attachments audio {
+  width: 100%;
+}
+
+.attachments .name {
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.attachments button {
+  min-height: 2.25rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.85rem;
+}
+
+dialog {
+  width: min(100% - 2rem, 24rem);
+  padding: 1.25rem;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+dialog::backdrop {
+  background: rgb(0 0 0 / 0.5);
+}
+
+dialog menu {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  margin: 1.25rem 0 0;
+  padding: 0;
+}
+
+/* Phone: one pane at a time. */
+@media (max-width: 44rem) {
+  .diary {
+    grid-template-columns: 1fr;
+  }
+
+  .diary[data-pane="list"] .editor-pane,
+  .diary[data-pane="editor"] .list-pane {
+    display: none;
+  }
+
+  .list-pane {
+    border-right: 0;
+  }
+
+  .back {
+    display: inline-block;
+  }
+}
+
+@media (forced-colors: active) {
+  #entries button[aria-current="true"] {
+    border-left-color: Highlight;
+  }
+}

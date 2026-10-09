@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Sealed Diary</title>
+    <link rel="stylesheet" href="style.css" />
+    <script type="module" src="app.js"></script>
+  </head>
+  <body>
+    <main id="gate" class="gate" hidden>
+      <h1>Sealed Diary</h1>
+
+      <form id="create-form" hidden>
+        <p>Elige la contraseña que protegerá tu diario. Nadie puede recuperarla por ti.</p>
+        <label for="create-password">Contraseña (mínimo 10 caracteres)</label>
+        <input id="create-password" type="password" autocomplete="new-password" minlength="10" required />
+        <label for="create-repeat">Repite la contraseña</label>
+        <input id="create-repeat" type="password" autocomplete="new-password" minlength="10" required />
+        <button class="primary">Crear diario</button>
+      </form>
+
+      <form id="unlock-form" hidden>
+        <label for="unlock-password">Contraseña</label>
+        <input id="unlock-password" type="password" autocomplete="current-password" required />
+        <button class="primary">Desbloquear</button>
+        <button type="button" class="link" id="show-recover">He olvidado la contraseña</button>
+      </form>
+
+      <form id="recover-form" hidden>
+        <p>Introduce la clave de recuperación que guardaste al crear el diario y elige una contraseña nueva.</p>
+        <label for="recover-key">Clave de recuperación</label>
+        <textarea id="recover-key" rows="3" autocomplete="off" autocapitalize="off" spellcheck="false" required></textarea>
+        <label for="recover-password">Contraseña nueva (mínimo 10 caracteres)</label>
+        <input id="recover-password" type="password" autocomplete="new-password" minlength="10" required />
+        <button class="primary">Recuperar acceso</button>
+        <button type="button" class="link" id="show-unlock">Volver</button>
+      </form>
+
+      <section id="recovery-shown" hidden>
+        <h2>Tu clave de recuperación</h2>
+        <p>
+          Es la única forma de entrar si olvidas la contraseña. Apúntala en papel y guárdala lejos de este
+          dispositivo. No se volverá a mostrar.
+        </p>
+        <output id="recovery-key" class="key"></output>
+        <label class="check">
+          <input id="recovery-saved" type="checkbox" />
+          La he guardado en un lugar seguro
+        </label>
+        <button class="primary" id="recovery-done" disabled>Entrar al diario</button>
+      </section>
+
+      <p id="gate-error" class="error" role="alert" hidden></p>
+    </main>
+
+    <div id="diary" class="diary" data-pane="list" hidden>
+      <aside class="list-pane">
+        <header>
+          <button class="primary" id="new-entry">Nueva entrada</button>
+          <button id="lock">Bloquear</button>
+        </header>
+        <p id="unreadable" class="notice" role="status" hidden></p>
+        <ul id="entries"></ul>
+        <p id="empty" class="hint" hidden>Todavía no hay entradas.</p>
+      </aside>
+
+      <form id="editor" class="editor-pane">
+        <header>
+          <button type="button" id="back" class="back">‹ Entradas</button>
+          <input id="entry-date" type="date" aria-label="Fecha" required />
+          <span class="spacer"></span>
+          <button type="button" id="delete-entry" class="danger">Eliminar</button>
+          <button class="primary" id="save-entry">Guardar</button>
+        </header>
+
+        <section id="conflicts" class="notice" hidden>
+          <p>
+            Esta entrada se editó en otro dispositivo al mismo tiempo. Se muestra la versión más reciente. Al
+            guardar, lo que haya en pantalla sustituye a todas las versiones.
+          </p>
+          <ul id="conflict-list"></ul>
+        </section>
+
+        <input id="entry-title" class="title" type="text" placeholder="Título" aria-label="Título" />
+        <textarea id="entry-body" class="body" placeholder="Escribe aquí…" aria-label="Texto"></textarea>
+        <input id="entry-tags" type="text" placeholder="Etiquetas, separadas por comas" aria-label="Etiquetas" />
+
+        <ul id="attachments" class="attachments"></ul>
+        <footer>
+          <button type="button" id="attach">Adjuntar foto, audio o vídeo</button>
+          <p id="editor-status" class="hint" role="status"></p>
+        </footer>
+        <p id="editor-error" class="error" role="alert" hidden></p>
+      </form>
+    </div>
+
+    <dialog id="confirm">
+      <form method="dialog">
+        <p id="confirm-text"></p>
+        <menu>
+          <button value="cancel">Cancelar</button>
+          <button value="ok" id="confirm-ok" class="danger"></button>
+        </menu>
+      </form>
+    </dialog>
+  </body>
+</html>

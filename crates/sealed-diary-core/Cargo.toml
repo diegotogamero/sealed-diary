@@ -1,5 +1,5 @@
 [package]
-name = "lacre-core"
+name = "sealed-diary-core"
 description = "Vault format and cryptography for the encrypted diary"
 edition.workspace = true
 version.workspace = true

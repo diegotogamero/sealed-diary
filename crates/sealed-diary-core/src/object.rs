@@ -1,7 +1,7 @@
 //! Encrypted objects: diary entries, photos, songs, videos.
 //!
 //! ```text
-//! "LACR" | version (1) | chunk_log2 (1) | nonce prefix (19) | chunk 0 | chunk 1 | …
+//! "SDRY" | version (1) | chunk_log2 (1) | nonce prefix (19) | chunk 0 | chunk 1 | …
 //! ```
 //!
 //! The plaintext is split into fixed-size chunks, each sealed on its own with
@@ -21,7 +21,7 @@ use zeroize::Zeroizing;
 use crate::error::{Error, Result};
 use crate::keys::{MasterKey, random_bytes};
 
-const MAGIC: [u8; 4] = *b"LACR";
+const MAGIC: [u8; 4] = *b"SDRY";
 const FORMAT_VERSION: u8 = 1;
 const PREFIX_LEN: usize = 19;
 const HEADER_LEN: usize = MAGIC.len() + 2 + PREFIX_LEN;
@@ -71,7 +71,7 @@ struct ChunkCipher {
 
 impl ChunkCipher {
     fn new(key: &MasterKey, id: &ObjectId, header: &[u8; HEADER_LEN]) -> Self {
-        let object_key = key.derive(&[b"lacre/v1/object", &id.0]);
+        let object_key = key.derive(&[b"sealed-diary/v1/object", &id.0]);
         let mut prefix = [0u8; PREFIX_LEN];
         prefix.copy_from_slice(&header[HEADER_LEN - PREFIX_LEN..]);
         let mut aad = [0u8; ID_LEN + HEADER_LEN];

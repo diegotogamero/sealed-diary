@@ -1,7 +1,7 @@
 use std::fs;
 use std::io::Cursor;
 
-use lacre_core::{
+use sealed_diary_core::{
     Error, KdfParams, MasterKey, ObjectId, ObjectReader, RecoveryKey, Vault, VaultHeader,
     decrypt_bytes, decrypt_object, encrypt_bytes, encrypt_object,
 };

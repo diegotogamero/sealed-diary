@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/lacre-core"]
+members = ["crates/sealed-diary-core"]
 
 [workspace.package]
 edition = "2024"

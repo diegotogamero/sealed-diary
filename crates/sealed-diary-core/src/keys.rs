@@ -255,13 +255,13 @@ fn password_kek(password: &str, salt: &[u8], kdf: KdfParams) -> Result<Zeroizing
 }
 
 fn recovery_kek(recovery: &RecoveryKey, vault_id: &[u8]) -> Zeroizing<[u8; KEY_LEN]> {
-    hkdf_expand(recovery.0.as_ref(), &[b"lacre/v1/recovery", vault_id])
+    hkdf_expand(recovery.0.as_ref(), &[b"sealed-diary/v1/recovery", vault_id])
 }
 
 // Binding the KDF parameters and salt into the slot means a header edited on
 // the storage side simply fails to unlock.
 fn password_aad(vault_id: &[u8], salt: &[u8], kdf: KdfParams) -> Vec<u8> {
-    let mut aad = b"lacre/v1/slot/password".to_vec();
+    let mut aad = b"sealed-diary/v1/slot/password".to_vec();
     aad.extend_from_slice(vault_id);
     aad.extend_from_slice(salt);
     aad.extend_from_slice(&kdf.memory_kib.to_le_bytes());
@@ -271,7 +271,7 @@ fn password_aad(vault_id: &[u8], salt: &[u8], kdf: KdfParams) -> Vec<u8> {
 }
 
 fn recovery_aad(vault_id: &[u8]) -> Vec<u8> {
-    let mut aad = b"lacre/v1/slot/recovery".to_vec();
+    let mut aad = b"sealed-diary/v1/slot/recovery".to_vec();
     aad.extend_from_slice(vault_id);
     aad
 }

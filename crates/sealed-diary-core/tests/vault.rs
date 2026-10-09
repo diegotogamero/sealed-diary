@@ -2,8 +2,8 @@ use std::fs;
 use std::io::Cursor;
 
 use sealed_diary_core::{
-    Error, KdfParams, MasterKey, ObjectId, ObjectReader, RecoveryKey, Vault, VaultHeader,
-    decrypt_bytes, decrypt_object, encrypt_bytes, encrypt_object,
+    Error, KdfParams, MasterKey, ObjectId, ObjectKind, ObjectReader, RecoveryKey, Vault,
+    VaultHeader, decrypt_bytes, decrypt_object, encrypt_bytes, encrypt_object,
 };
 
 // Cheap parameters: these tests exercise the format, not Argon2's cost.
@@ -27,13 +27,13 @@ fn pattern(len: usize) -> Vec<u8> {
 
 fn seal(key: &MasterKey, id: &ObjectId, plaintext: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
-    encrypt_object(key, id, CHUNK_LOG2, plaintext, &mut out).unwrap();
+    encrypt_object(key, ObjectKind::Media, id, CHUNK_LOG2, plaintext, &mut out).unwrap();
     out
 }
 
 fn open(key: &MasterKey, id: &ObjectId, ciphertext: &[u8]) -> Result<Vec<u8>, Error> {
     let mut out = Vec::new();
-    decrypt_object(key, id, ciphertext, &mut out)?;
+    decrypt_object(key, ObjectKind::Media, id, ciphertext, &mut out)?;
     Ok(out)
 }
 
@@ -44,7 +44,11 @@ fn round_trips_at_chunk_boundaries() {
         let id = ObjectId::random().unwrap();
         let plaintext = pattern(len);
         let ciphertext = seal(&key, &id, &plaintext);
-        assert_eq!(open(&key, &id, &ciphertext).unwrap(), plaintext, "len {len}");
+        assert_eq!(
+            open(&key, &id, &ciphertext).unwrap(),
+            plaintext,
+            "len {len}"
+        );
     }
 }
 
@@ -60,7 +64,15 @@ fn rejects_any_flipped_byte() {
     let key = key();
     let id = ObjectId::random().unwrap();
     let ciphertext = seal(&key, &id, &pattern(CHUNK + 10));
-    for position in [0, 4, 5, 10, HEADER_LEN, HEADER_LEN + SEALED, ciphertext.len() - 1] {
+    for position in [
+        0,
+        4,
+        5,
+        10,
+        HEADER_LEN,
+        HEADER_LEN + SEALED,
+        ciphertext.len() - 1,
+    ] {
         let mut tampered = ciphertext.clone();
         tampered[position] ^= 1;
         assert!(open(&key, &id, &tampered).is_err(), "position {position}");
@@ -74,7 +86,7 @@ fn rejects_truncation_at_chunk_boundary() {
     let ciphertext = seal(&key, &id, &pattern(2 * CHUNK + 10));
     let truncated = &ciphertext[..HEADER_LEN + 2 * SEALED];
     assert!(matches!(open(&key, &id, truncated), Err(Error::Corrupted)));
-    assert!(ObjectReader::open(&key, &id, Cursor::new(truncated)).is_err());
+    assert!(ObjectReader::open(&key, ObjectKind::Media, &id, Cursor::new(truncated)).is_err());
 }
 
 #[test]
@@ -84,7 +96,10 @@ fn rejects_reordered_chunks() {
     let mut ciphertext = seal(&key, &id, &pattern(3 * CHUNK));
     let (first, rest) = ciphertext[HEADER_LEN..].split_at_mut(SEALED);
     first.swap_with_slice(&mut rest[..SEALED]);
-    assert!(matches!(open(&key, &id, &ciphertext), Err(Error::Corrupted)));
+    assert!(matches!(
+        open(&key, &id, &ciphertext),
+        Err(Error::Corrupted)
+    ));
 }
 
 #[test]
@@ -93,14 +108,25 @@ fn rejects_object_served_under_another_id() {
     let id = ObjectId::random().unwrap();
     let other = ObjectId::random().unwrap();
     let ciphertext = seal(&key, &id, b"entrada");
-    assert!(matches!(open(&key, &other, &ciphertext), Err(Error::Corrupted)));
+    assert!(matches!(
+        open(&key, &other, &ciphertext),
+        Err(Error::Corrupted)
+    ));
+}
+
+#[test]
+fn rejects_object_served_as_another_kind() {
+    let key = key();
+    let id = ObjectId::random().unwrap();
+    let ciphertext = encrypt_bytes(&key, ObjectKind::Media, &id, b"foto").unwrap();
+    assert!(decrypt_bytes(&key, ObjectKind::Entry, &id, &ciphertext).is_err());
 }
 
 #[test]
 fn rejects_wrong_master_key() {
     let id = ObjectId::random().unwrap();
-    let ciphertext = encrypt_bytes(&key(), &id, b"entrada").unwrap();
-    assert!(decrypt_bytes(&key(), &id, &ciphertext).is_err());
+    let ciphertext = encrypt_bytes(&key(), ObjectKind::Media, &id, b"entrada").unwrap();
+    assert!(decrypt_bytes(&key(), ObjectKind::Media, &id, &ciphertext).is_err());
 }
 
 #[test]
@@ -108,8 +134,13 @@ fn random_access_matches_plaintext() {
     let key = key();
     let id = ObjectId::random().unwrap();
     let plaintext = pattern(3 * CHUNK + 100);
-    let mut reader =
-        ObjectReader::open(&key, &id, Cursor::new(seal(&key, &id, &plaintext))).unwrap();
+    let mut reader = ObjectReader::open(
+        &key,
+        ObjectKind::Media,
+        &id,
+        Cursor::new(seal(&key, &id, &plaintext)),
+    )
+    .unwrap();
     assert_eq!(reader.len(), plaintext.len() as u64);
 
     for offset in [0, 1, CHUNK - 1, CHUNK, 2 * CHUNK + 7, 3 * CHUNK + 99] {
@@ -126,7 +157,13 @@ fn random_access_matches_plaintext() {
 fn random_access_on_empty_object() {
     let key = key();
     let id = ObjectId::random().unwrap();
-    let reader = ObjectReader::open(&key, &id, Cursor::new(seal(&key, &id, b""))).unwrap();
+    let reader = ObjectReader::open(
+        &key,
+        ObjectKind::Media,
+        &id,
+        Cursor::new(seal(&key, &id, b"")),
+    )
+    .unwrap();
     assert!(reader.is_empty());
 }
 
@@ -135,16 +172,25 @@ fn header_unlocks_with_password_and_recovery_key() {
     let (header, master, recovery) = VaultHeader::create("contraseña", FAST_KDF).unwrap();
     let header = VaultHeader::from_json(&header.to_json().unwrap()).unwrap();
     let id = ObjectId::random().unwrap();
-    let ciphertext = encrypt_bytes(&master, &id, b"secreto").unwrap();
+    let ciphertext = encrypt_bytes(&master, ObjectKind::Media, &id, b"secreto").unwrap();
 
     let by_password = header.unlock("contraseña").unwrap();
-    assert_eq!(&**decrypt_bytes(&by_password, &id, &ciphertext).unwrap(), b"secreto");
+    assert_eq!(
+        &**decrypt_bytes(&by_password, ObjectKind::Media, &id, &ciphertext).unwrap(),
+        b"secreto"
+    );
 
     let typed_back = RecoveryKey::parse(&recovery.to_display_string().to_uppercase()).unwrap();
     let by_recovery = header.unlock_with_recovery(&typed_back).unwrap();
-    assert_eq!(&**decrypt_bytes(&by_recovery, &id, &ciphertext).unwrap(), b"secreto");
+    assert_eq!(
+        &**decrypt_bytes(&by_recovery, ObjectKind::Media, &id, &ciphertext).unwrap(),
+        b"secreto"
+    );
 
-    assert!(matches!(header.unlock("contrasena"), Err(Error::WrongSecret)));
+    assert!(matches!(
+        header.unlock("contrasena"),
+        Err(Error::WrongSecret)
+    ));
 }
 
 #[test]
@@ -181,21 +227,33 @@ fn vault_on_disk() {
     let plaintext = pattern(200_000);
 
     let (vault, recovery) = Vault::create(dir.path(), "uno", FAST_KDF).unwrap();
-    let id = vault.put(plaintext.as_slice()).unwrap();
+    let (id, size) = vault.put(ObjectKind::Media, plaintext.as_slice()).unwrap();
+    assert_eq!(size, plaintext.len() as u64);
+    assert_eq!(vault.list(ObjectKind::Media).unwrap(), [id]);
+    assert!(vault.list(ObjectKind::Entry).unwrap().is_empty());
     assert!(Vault::create(dir.path(), "uno", FAST_KDF).is_err());
 
     vault.change_password("dos", FAST_KDF).unwrap();
     drop(vault);
-    assert!(matches!(Vault::open(dir.path(), "uno"), Err(Error::WrongSecret)));
+    assert!(matches!(
+        Vault::open(dir.path(), "uno"),
+        Err(Error::WrongSecret)
+    ));
 
     for vault in [
         Vault::open(dir.path(), "dos").unwrap(),
         Vault::open_with_recovery(dir.path(), &recovery).unwrap(),
     ] {
         let mut out = Vec::new();
-        assert_eq!(vault.get(&id, &mut out).unwrap(), plaintext.len() as u64);
+        assert_eq!(
+            vault.get(ObjectKind::Media, &id, &mut out).unwrap(),
+            plaintext.len() as u64
+        );
         assert_eq!(out, plaintext);
-        assert_eq!(vault.reader(&id).unwrap().len(), plaintext.len() as u64);
+        assert_eq!(
+            vault.reader(ObjectKind::Media, &id).unwrap().len(),
+            plaintext.len() as u64
+        );
     }
 
     // Nothing recognisable reaches the disk, and no temp files are left behind.
@@ -218,6 +276,6 @@ fn vault_on_disk() {
     }
 
     let vault = Vault::open(dir.path(), "dos").unwrap();
-    vault.delete(&id).unwrap();
-    assert!(vault.get(&id, Vec::new()).is_err());
+    vault.delete(ObjectKind::Media, &id).unwrap();
+    assert!(vault.get(ObjectKind::Media, &id, Vec::new()).is_err());
 }

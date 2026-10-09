@@ -16,6 +16,7 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use zeroize::Zeroizing;
 
 use crate::error::{Error, Result};
@@ -36,7 +37,7 @@ const MAX_CHUNK_LOG2: u8 = 22;
 
 /// Random name of an object in storage. Deliberately unrelated to the content,
 /// so the backend cannot tell whether two vaults hold the same file.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ObjectId([u8; ID_LEN]);
 
 impl ObjectId {
@@ -61,6 +62,43 @@ impl fmt::Debug for ObjectId {
     }
 }
 
+impl Serialize for ObjectId {
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_hex())
+    }
+}
+
+impl<'de> Deserialize<'de> for ObjectId {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        Self::from_hex(&text).map_err(serde::de::Error::custom)
+    }
+}
+
+/// What an object holds. The kind is part of the key derivation, so the
+/// backend cannot pass a media file off as a diary entry or the reverse.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ObjectKind {
+    Entry,
+    Media,
+}
+
+impl ObjectKind {
+    fn label(self) -> &'static [u8] {
+        match self {
+            Self::Entry => b"entry/",
+            Self::Media => b"media/",
+        }
+    }
+
+    pub(crate) fn dir(self) -> &'static str {
+        match self {
+            Self::Entry => "entries",
+            Self::Media => "media",
+        }
+    }
+}
+
 struct ChunkCipher {
     cipher: XChaCha20Poly1305,
     prefix: [u8; PREFIX_LEN],
@@ -70,8 +108,8 @@ struct ChunkCipher {
 }
 
 impl ChunkCipher {
-    fn new(key: &MasterKey, id: &ObjectId, header: &[u8; HEADER_LEN]) -> Self {
-        let object_key = key.derive(&[b"sealed-diary/v1/object", &id.0]);
+    fn new(key: &MasterKey, kind: ObjectKind, id: &ObjectId, header: &[u8; HEADER_LEN]) -> Self {
+        let object_key = key.derive(&[b"sealed-diary/v1/object/", kind.label(), &id.0]);
         let mut prefix = [0u8; PREFIX_LEN];
         prefix.copy_from_slice(&header[HEADER_LEN - PREFIX_LEN..]);
         let mut aad = [0u8; ID_LEN + HEADER_LEN];
@@ -166,6 +204,7 @@ fn read_full<R: Read>(reader: &mut R, buf: &mut [u8]) -> io::Result<usize> {
 /// Encrypts `reader` into `writer`, returning the number of plaintext bytes.
 pub fn encrypt_object<R: Read, W: Write>(
     key: &MasterKey,
+    kind: ObjectKind,
     id: &ObjectId,
     chunk_log2: u8,
     mut reader: R,
@@ -176,7 +215,7 @@ pub fn encrypt_object<R: Read, W: Write>(
     }
     let chunk = 1usize << chunk_log2;
     let header = build_header(chunk_log2, &random_bytes()?);
-    let cipher = ChunkCipher::new(key, id, &header);
+    let cipher = ChunkCipher::new(key, kind, id, &header);
     writer.write_all(&header)?;
 
     // One chunk of read-ahead: a chunk is the last one only if nothing follows.
@@ -213,13 +252,14 @@ pub fn encrypt_object<R: Read, W: Write>(
 /// hold a genuine prefix of the plaintext. Callers must discard it.
 pub fn decrypt_object<R: Read, W: Write>(
     key: &MasterKey,
+    kind: ObjectKind,
     id: &ObjectId,
     mut reader: R,
     mut writer: W,
 ) -> Result<u64> {
     let header = read_header(&mut reader)?;
     let sealed = parse_header(&header)? + TAG_LEN;
-    let cipher = ChunkCipher::new(key, id, &header);
+    let cipher = ChunkCipher::new(key, kind, id, &header);
 
     let mut current = vec![0u8; sealed];
     let mut next = vec![0u8; sealed];
@@ -247,19 +287,25 @@ pub fn decrypt_object<R: Read, W: Write>(
     Ok(total)
 }
 
-pub fn encrypt_bytes(key: &MasterKey, id: &ObjectId, plaintext: &[u8]) -> Result<Vec<u8>> {
+pub fn encrypt_bytes(
+    key: &MasterKey,
+    kind: ObjectKind,
+    id: &ObjectId,
+    plaintext: &[u8],
+) -> Result<Vec<u8>> {
     let mut out = Vec::with_capacity(plaintext.len() + HEADER_LEN + TAG_LEN);
-    encrypt_object(key, id, DEFAULT_CHUNK_LOG2, plaintext, &mut out)?;
+    encrypt_object(key, kind, id, DEFAULT_CHUNK_LOG2, plaintext, &mut out)?;
     Ok(out)
 }
 
 pub fn decrypt_bytes(
     key: &MasterKey,
+    kind: ObjectKind,
     id: &ObjectId,
     ciphertext: &[u8],
 ) -> Result<Zeroizing<Vec<u8>>> {
     let mut out = Zeroizing::new(Vec::with_capacity(ciphertext.len()));
-    decrypt_object(key, id, ciphertext, &mut *out)?;
+    decrypt_object(key, kind, id, ciphertext, &mut *out)?;
     Ok(out)
 }
 
@@ -275,7 +321,7 @@ pub struct ObjectReader<R> {
 }
 
 impl<R: Read + Seek> ObjectReader<R> {
-    pub fn open(key: &MasterKey, id: &ObjectId, mut inner: R) -> Result<Self> {
+    pub fn open(key: &MasterKey, kind: ObjectKind, id: &ObjectId, mut inner: R) -> Result<Self> {
         let file_len = inner.seek(SeekFrom::End(0))?;
         inner.seek(SeekFrom::Start(0))?;
         let header = read_header(&mut inner)?;
@@ -294,7 +340,7 @@ impl<R: Read + Seek> ObjectReader<R> {
 
         let mut reader = Self {
             inner,
-            cipher: ChunkCipher::new(key, id, &header),
+            cipher: ChunkCipher::new(key, kind, id, &header),
             chunk,
             chunks: u32::try_from(chunks).map_err(|_| Error::Corrupted)?,
             last_sealed_len: last_sealed_len as usize,

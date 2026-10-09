@@ -28,6 +28,8 @@ No protege frente a:
 - Contraseñas débiles o reutilizadas.
 - Alguien que te obligue a desbloquearlo.
 
+Límite conocido: quien controle el almacenamiento puede borrar ficheros o devolver la bóveda entera a un estado anterior. Eso no revela nada, pero no se puede detectar sin una segunda copia. Haz copias de seguridad.
+
 Qué ve quien controle el almacenamiento: número de objetos, tamaño aproximado de cada uno, cuándo se crean y desde qué IP se accede. Nunca contenido, títulos, fechas de las entradas ni tipo de fichero.
 
 ## Arquitectura
@@ -41,14 +43,15 @@ clave de recuperación ─HKDF──▶ ┘
 - **Derivación:** Argon2id (128 MiB, 3 pasadas por defecto). La contraseña se normaliza a NFKC para que funcione igual en todos los teclados.
 - **Clave maestra:** aleatoria, de 256 bits, envuelta por la contraseña y por la clave de recuperación. Cambiar la contraseña no obliga a recifrar nada.
 - **Objetos:** cada entrada o fichero multimedia se cifra con XChaCha20-Poly1305 en trozos de 64 KiB autenticados uno a uno. Esto permite reproducir un vídeo saltando a cualquier punto sin descifrarlo entero y con memoria constante.
-- **Bóveda:** una carpeta con `vault.json` (sin secretos) y `objects/` (blobs cifrados). Esa carpeta es lo único que se sincroniza.
+- **Entradas:** nunca se editan en sitio. Cada guardado escribe una revisión nueva que nombra a las que sustituye. Si dos dispositivos editan la misma entrada sin conexión, al sincronizar aparecen ambas versiones como conflicto; ninguna pisa a la otra. Una revisión antigua restaurada por el servidor no vuelve a ser la actual.
+- **Bóveda:** una carpeta con `vault.json` (sin secretos), `entries/` y `media/` (blobs cifrados con nombre aleatorio). Esa carpeta es lo único que se sincroniza.
 
 Solo se usan primitivas estándar de las bibliotecas [RustCrypto](https://github.com/RustCrypto). El formato exacto está documentado en `crates/sealed-diary-core/src/object.rs` y `keys.rs`.
 
 ## Hoja de ruta
 
 1. [x] Núcleo: jerarquía de claves, formato de objetos, bóveda en disco.
-2. [ ] Modelo de entradas (texto, fecha, etiquetas, adjuntos) e índice cifrado.
+2. [x] Modelo de entradas (texto, fecha, etiquetas, adjuntos) con historial de revisiones y detección de conflictos.
 3. [ ] Aplicación de escritorio (Tauri 2): bloqueo, editor, galería, reproductor.
 4. [ ] Sincronización: carpeta local (Syncthing) y WebDAV, con resolución de conflictos.
 5. [ ] Aplicación móvil (Android, después iOS).

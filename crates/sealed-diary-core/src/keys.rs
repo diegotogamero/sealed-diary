@@ -164,11 +164,7 @@ impl VaultHeader {
         let salt = random_bytes::<SALT_LEN>()?.to_vec();
 
         let password_kek = password_kek(password, &salt, kdf)?;
-        let password_slot = wrap(
-            &password_kek,
-            &password_aad(&vault_id, &salt, kdf),
-            &master,
-        )?;
+        let password_slot = wrap(&password_kek, &password_aad(&vault_id, &salt, kdf), &master)?;
         let recovery_slot = wrap(
             &recovery_kek(&recovery, &vault_id),
             &recovery_aad(&vault_id),
@@ -255,7 +251,10 @@ fn password_kek(password: &str, salt: &[u8], kdf: KdfParams) -> Result<Zeroizing
 }
 
 fn recovery_kek(recovery: &RecoveryKey, vault_id: &[u8]) -> Zeroizing<[u8; KEY_LEN]> {
-    hkdf_expand(recovery.0.as_ref(), &[b"sealed-diary/v1/recovery", vault_id])
+    hkdf_expand(
+        recovery.0.as_ref(),
+        &[b"sealed-diary/v1/recovery", vault_id],
+    )
 }
 
 // Binding the KDF parameters and salt into the slot means a header edited on

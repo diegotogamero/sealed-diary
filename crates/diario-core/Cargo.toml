@@ -1,0 +1,22 @@
+[package]
+name = "diario-core"
+description = "Vault format and cryptography for the encrypted diary"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
+getrandom = "0.3"
+hex = "0.4"
+hkdf = "0.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+unicode-normalization = "0.1"
+zeroize = "1"
+
+[dev-dependencies]
+tempfile = "3"
